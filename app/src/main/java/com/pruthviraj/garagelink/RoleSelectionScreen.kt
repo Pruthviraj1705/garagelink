@@ -24,8 +24,8 @@ data class NewProfile(
     val role: String
 )
 
-// Flip to true when driver-side ships - re-enables the "I'm a Driver" card below.
-private const val DRIVER_SIDE_LIVE = false
+// Driver side is live: the "I'm a Driver" card below is enabled.
+private const val DRIVER_SIDE_LIVE = true
 
 @Composable
 fun RoleSelectionScreen(userId: String, phoneNumber: String, onRoleSelected: () -> Unit) {
