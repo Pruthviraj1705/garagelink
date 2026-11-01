@@ -1,44 +1,98 @@
-Deno.serve(async (req) => {
-  const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  };
+// Supabase Edge Function: scan-invoice
+// Reads a supplier-invoice photo with Gemini and returns the line items as JSON.
+//
+// Auth:    caller must send a valid Supabase user JWT (the Android app sends the logged-in
+//          user's access token). Garage ownership and the monthly scan quota are enforced
+//          inside the check_and_log_invoice_scan RPC, which runs as the verified user
+//          (auth.uid()), so a user cannot spend another garage's quota.
+// Secrets: GEMINI_API_KEY   (Supabase dashboard -> Edge Functions -> Secrets)
+// Optional: GEMINI_MODEL    (defaults to the model below)
 
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-3.6-flash";
+const MAX_IMAGE_CHARS = 2_000_000;
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "content-type": "application/json" },
+  });
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { imageBase64 } = await req.json();
-    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ error: "Missing authorization" }, 401);
 
-    if (!anthropicKey) {
-      return new Response(JSON.stringify({ error: "Missing API key" }), {
-        status: 500,
-        headers: { ...corsHeaders, "content-type": "application/json" },
-      });
+    const userClient = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+
+    const { data: userData, error: userError } = await userClient.auth.getUser();
+    if (userError || !userData?.user) return json({ error: "Not authenticated" }, 401);
+
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "Invalid request body" }, 400);
+    }
+    const { garageId, imageBase64 } = body ?? {};
+    if (typeof garageId !== "string" || !garageId || typeof imageBase64 !== "string" || !imageBase64) {
+      return json({ error: "Missing image or garageId" }, 400);
+    }
+    if (imageBase64.length > MAX_IMAGE_CHARS) return json({ error: "Image too large" }, 400);
+
+    const geminiKey = Deno.env.get("GEMINI_API_KEY");
+    if (!geminiKey) {
+      console.error("GEMINI_API_KEY is not set");
+      return json({ error: "Service is not configured" }, 500);
     }
 
-    const prompt = `Extract every line item from this invoice/challan image. For each row, return the product name, quantity, and unit price (MRP) if visible. Ignore header/footer text, totals, tax lines, dates, and signatures. Respond with ONLY a raw JSON array, no markdown formatting, no other text, in this exact format:
-[{"name": "product name here", "quantity": 1, "price": 123.45}]
-If price isn't clearly visible for a row, use null. If quantity isn't visible, use 1 as default.`;
+    // Quota + ownership check. Runs as the verified user, so auth.uid() inside the RPC
+    // is the real caller. Note: the scan is counted before Gemini is called.
+    const { data: usageCheck, error: usageError } = await userClient.rpc(
+      "check_and_log_invoice_scan",
+      { p_garage_id: garageId },
+    );
+    if (usageError) {
+      console.error("usage check failed", usageError);
+      return json({ error: "Couldn't verify usage limit" }, 500);
+    }
+    if (!usageCheck?.success) {
+      return json({ error: "scan_limit_reached", limit: usageCheck?.limit }, 429);
+    }
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const prompt = `Extract all line items from this invoice image. Ignore headers/footers/totals.
+Respond with a JSON object with a single key "items", containing an array of objects shaped like:
+{"name": "product name", "quantity": 1, "price": 123.45}`;
+
+    const response = await fetch(GEMINI_URL, {
       method: "POST",
       headers: {
-        "content-type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
+        "Authorization": `Bearer ${geminiKey}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 2000,
+        model: GEMINI_MODEL,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "user",
             content: [
-              { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
               { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } },
             ],
           },
         ],
@@ -48,23 +102,17 @@ If price isn't clearly visible for a row, use null. If quantity isn't visible, u
     const data = await response.json();
 
     if (!response.ok) {
-      return new Response(JSON.stringify({ error: data }), {
-        status: 502,
-        headers: { ...corsHeaders, "content-type": "application/json" },
-      });
+      // Log the provider's error server-side; never forward it to the client.
+      console.error("Gemini error", response.status, JSON.stringify(data));
+      return json({ error: "Couldn't read the invoice. Please try again." }, 502);
     }
 
-    const textBlock = data.content?.find((c: any) => c.type === "text");
-    const raw = textBlock?.text ?? "[]";
-    const cleaned = raw.replace(/```json|```/g, "").trim();
-
-    return new Response(cleaned, {
+    const rawText = data.choices?.[0]?.message?.content ?? '{"items":[]}';
+    return new Response(rawText, {
       headers: { ...corsHeaders, "content-type": "application/json" },
     });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
-      status: 500,
-      headers: { ...corsHeaders, "content-type": "application/json" },
-    });
+    console.error("scan-invoice failed", e);
+    return json({ error: "Something went wrong. Please try again." }, 500);
   }
 });
