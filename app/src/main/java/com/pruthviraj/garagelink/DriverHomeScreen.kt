@@ -107,7 +107,6 @@ fun DriverHomeScreen(onLogout: () -> Unit) {
     var isSearching by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
     var hasSearched by remember { mutableStateOf(false) }
-    var comingSoonMessage by remember { mutableStateOf<String?>(null) }
     var showAboutUs by remember { mutableStateOf(false) }
     var showContactUs by remember { mutableStateOf(false) }
     var showNotifications by remember { mutableStateOf(false) }
@@ -282,7 +281,8 @@ fun DriverHomeScreen(onLogout: () -> Unit) {
                         })
                     } catch (_: Exception) { }
                 } catch (e: Exception) {
-                    errorMessage = e.message ?: "Search failed. Check your connection and try again."
+                    android.util.Log.e("DriverHome", "Search failed", e)
+                    errorMessage = "Search failed. Check your connection and try again."
                 }
                 isSearching = false
                 hasSearched = true
@@ -552,15 +552,6 @@ fun DriverHomeScreen(onLogout: () -> Unit) {
                 }
             }
         }
-    }
-
-    comingSoonMessage?.let { msg ->
-        AlertDialog(
-            onDismissRequest = { comingSoonMessage = null },
-            title = { Text("Coming Soon") },
-            text = { Text(msg) },
-            confirmButton = { TextButton(onClick = { comingSoonMessage = null }) { Text("OK") } }
-        )
     }
 }
 

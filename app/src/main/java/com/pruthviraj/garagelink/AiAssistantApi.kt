@@ -35,11 +35,11 @@ sealed class AiAssistantResult {
 }
 
 object AiAssistantApi {
-    private const val ENDPOINT = "https://eceuvkvairdbhddyebmw.supabase.co/functions/v1/bright-action"
+    private const val ENDPOINT = "${SupabaseConfig.URL}/functions/v1/bright-action"
     // Still sent as the "apikey" header - that's Supabase's normal client-identification
     // header for the gateway, separate from user auth. It's fine that it's public; it was
     // never the thing protecting per-user usage limits, and still isn't.
-    private const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjZXV2a3ZhaXJkYmhkZHllYm13Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU2OTA4MDEsImV4cCI6MjEwMTI2NjgwMX0.WYNjKG4pS4AJaNV9d1oOrYrqD3Fv708jzypH5-hdtj4"
+    private const val SUPABASE_ANON_KEY = SupabaseConfig.ANON_KEY
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun sendMessage(

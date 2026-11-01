@@ -60,9 +60,9 @@ enum class InventorySortOption(val label: String) {
     NAME_DESC("Name: Z-A")
 }
 
-// Flip either to true to bring the section back live.
-private const val PROMO_REFERRALS_LIVE = false
-private const val ANALYTICS_LIVE = false
+// Feature flags: set either to false to hide that section behind a "Coming Soon" dialog.
+private const val PROMO_REFERRALS_LIVE = true
+private const val ANALYTICS_LIVE = true
 
 @Composable
 fun GarageOwnerHomeScreen(garageId: String, shopName: String, onLogout: () -> Unit) {
@@ -495,6 +495,8 @@ fun GarageOwnerHomeScreen(garageId: String, shopName: String, onLogout: () -> Un
         var quantity by remember { mutableStateOf(item.quantity.toString()) }
         var mutedUntilMillis by remember { mutableStateOf<Long?>(null) }
         var isMuteLoading by remember { mutableStateOf(true) }
+        var isBusy by remember { mutableStateOf(false) }
+        var actionError by remember { mutableStateOf<String?>(null) }
 
         LaunchedEffect(item.id) {
             mutedUntilMillis = try {
@@ -502,16 +504,28 @@ fun GarageOwnerHomeScreen(garageId: String, shopName: String, onLogout: () -> Un
                     .select { filter { eq("garage_id", garageId); eq("inventory_item_id", item.id) } }
                     .decodeSingleOrNull<MuteRow>()
                 mute?.let { parseIsoToMillis(it.muted_until) }?.takeIf { it > System.currentTimeMillis() }
-            } catch (e: Exception) { null }
+            } catch (e: Exception) {
+                android.util.Log.w("GarageOwnerHome", "Couldn't load mute status", e)
+                null
+            }
             isMuteLoading = false
         }
 
         AlertDialog(
-            onDismissRequest = { editItem = null },
+            onDismissRequest = { if (!isBusy) editItem = null },
             title = { Text(item.part_name) },
             text = {
                 Column {
-                    OutlinedTextField(quantity, { quantity = it }, label = { Text("Quantity") })
+                    OutlinedTextField(
+                        quantity,
+                        { quantity = it },
+                        label = { Text("Quantity") },
+                        enabled = !isBusy
+                    )
+                    actionError?.let {
+                        Spacer(Modifier.height(8.dp))
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
                     Spacer(Modifier.height(16.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(12.dp))
@@ -528,16 +542,25 @@ fun GarageOwnerHomeScreen(garageId: String, shopName: String, onLogout: () -> Un
                                 color = MaterialTheme.colorScheme.error
                             )
                             Spacer(Modifier.height(6.dp))
-                            OutlinedButton(onClick = {
-                                scope.launch {
-                                    try {
-                                        postgrest.from("notification_mutes").delete {
-                                            filter { eq("garage_id", garageId); eq("inventory_item_id", item.id) }
+                            OutlinedButton(
+                                enabled = !isBusy,
+                                onClick = {
+                                    isBusy = true
+                                    actionError = null
+                                    scope.launch {
+                                        try {
+                                            postgrest.from("notification_mutes").delete {
+                                                filter { eq("garage_id", garageId); eq("inventory_item_id", item.id) }
+                                            }
+                                            mutedUntilMillis = null
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("GarageOwnerHome", "Unmute failed", e)
+                                            actionError = "Couldn't unmute. Check your connection and try again."
                                         }
-                                        mutedUntilMillis = null
-                                    } catch (_: Exception) {}
+                                        isBusy = false
+                                    }
                                 }
-                            }) { Text("Unmute now") }
+                            ) { Text("Unmute now") }
                         } else {
                             Text(
                                 "You'll be notified when this part runs low",
@@ -551,16 +574,23 @@ fun GarageOwnerHomeScreen(garageId: String, shopName: String, onLogout: () -> Un
                             ) {
                                 listOf(1 to "1d", 7 to "7d", 30 to "30d").forEach { (days, label) ->
                                     OutlinedButton(
+                                        enabled = !isBusy,
                                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                                         onClick = {
                                             val untilIso = isoTimestampFromNowPlus(days)
+                                            isBusy = true
+                                            actionError = null
                                             scope.launch {
                                                 try {
                                                     postgrest.from("notification_mutes").upsert(
                                                         NewMute(garageId, item.id, untilIso)
                                                     ) { onConflict = "garage_id,inventory_item_id" }
                                                     mutedUntilMillis = System.currentTimeMillis() + days.toLong() * 86_400_000
-                                                } catch (_: Exception) {}
+                                                } catch (e: Exception) {
+                                                    android.util.Log.e("GarageOwnerHome", "Mute failed", e)
+                                                    actionError = "Couldn't mute notifications. Check your connection and try again."
+                                                }
+                                                isBusy = false
                                             }
                                         }
                                     ) { Text("Mute $label") }
@@ -571,29 +601,48 @@ fun GarageOwnerHomeScreen(garageId: String, shopName: String, onLogout: () -> Un
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    val qty = quantity.toIntOrNull() ?: item.quantity
-                    scope.launch {
-                        try {
-                            postgrest.from("inventory_items").update(UpdateQuantity(qty)) { filter { eq("id", item.id) } }
-                            refreshTrigger++
-                        } catch (_: Exception) {}
+                TextButton(
+                    enabled = !isBusy,
+                    onClick = {
+                        val qty = quantity.toIntOrNull() ?: item.quantity
+                        isBusy = true
+                        actionError = null
+                        scope.launch {
+                            try {
+                                postgrest.from("inventory_items")
+                                    .update(UpdateQuantity(qty)) { filter { eq("id", item.id) } }
+                                refreshTrigger++
+                                editItem = null
+                            } catch (e: Exception) {
+                                android.util.Log.e("GarageOwnerHome", "Update quantity failed", e)
+                                actionError = "Couldn't save the change. Check your connection and try again."
+                            }
+                            isBusy = false
+                        }
                     }
-                    editItem = null
-                }) { Text("Save") }
+                ) { Text("Save") }
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = {
-                        scope.launch {
-                            try {
-                                postgrest.from("inventory_items").delete { filter { eq("id", item.id) } }
-                                refreshTrigger++
-                            } catch (_: Exception) {}
+                    TextButton(
+                        enabled = !isBusy,
+                        onClick = {
+                            isBusy = true
+                            actionError = null
+                            scope.launch {
+                                try {
+                                    postgrest.from("inventory_items").delete { filter { eq("id", item.id) } }
+                                    refreshTrigger++
+                                    editItem = null
+                                } catch (e: Exception) {
+                                    android.util.Log.e("GarageOwnerHome", "Delete item failed", e)
+                                    actionError = "Couldn't delete this part. Check your connection and try again."
+                                }
+                                isBusy = false
+                            }
                         }
-                        editItem = null
-                    }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-                    TextButton(onClick = { editItem = null }) { Text("Cancel") }
+                    ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    TextButton(onClick = { editItem = null }, enabled = !isBusy) { Text("Cancel") }
                 }
             }
         )
@@ -661,6 +710,7 @@ fun GarageOwnerHomeScreen(garageId: String, shopName: String, onLogout: () -> Un
                                     }
                                 }
                             } catch (e: Exception) {
+                                android.util.Log.e("GarageOwnerHome", "Redeem promo failed", e)
                                 isError = true
                                 resultMessage = "Something went wrong. Please try again."
                             }
