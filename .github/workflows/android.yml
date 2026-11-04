@@ -18,7 +18,10 @@ jobs:
           distribution: temurin
           java-version: '25'
 
-      - uses: android-actions/setup-android@v3
+      # The runner image already has the Android SDK (ANDROID_HOME); just make sure the
+      # licenses are accepted so Gradle can download any missing platform on its own.
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses > /dev/null || true
 
       - uses: gradle/actions/setup-gradle@v4
 
