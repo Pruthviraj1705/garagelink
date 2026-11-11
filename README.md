@@ -29,11 +29,11 @@ garages have it in stock.
 - Phone-number login, light and dark theme, subscription plans with server-enforced limits,
   promo codes and a referral programme
 
-Add screenshots to docs/screenshots/ and remove this comment.
+## Screenshots
+
 | Garage inventory | Invoice scan | Driver search | Analytics |
 |---|---|---|---|
-| ![](docs/screenshots/inventory.png) | ![](docs/screenshots/scan.png) | ![](docs/screenshots/search.png) | ![](docs/screenshots/analytics.png) |
-
+| <img src="docs/screenshots/inventory.png" width="200" alt="Garage inventory"> | <img src="docs/screenshots/scan.png" width="200" alt="Invoice scan"> | <img src="docs/screenshots/search.png" width="200" alt="Driver search"> | <img src="docs/screenshots/analytics.png" width="200" alt="Analytics"> |
 
 ## How it works
 
@@ -162,4 +162,4 @@ the security audit.
 
 ## License
 
-[MIT](LICENSE) © 2026 [Pruthviraj Vitthal Jagtap]
+[MIT](LICENSE) © 2026 [Pruthviraj Vitthal Jagtap](https://github.com/Pruthviraj1705)
