@@ -23,3 +23,7 @@ supabase/.branches/
 .env
 test.json
 .idea/
+
+app/release/
+*.apk
+*.aab
