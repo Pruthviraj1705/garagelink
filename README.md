@@ -11,6 +11,19 @@ garages have it in stock.
 > Portfolio project. It is not published on Google Play, billing is simulated and SMS login uses
 > Supabase test numbers. See [Known limitations](#known-limitations).
 
+## Download
+
+**[Download GarageLink v1.0.0 (APK, about 22 MB)](https://github.com/Pruthviraj1705/garagelink/releases/latest)**
+
+The app is not on Google Play, so Android will ask you to allow installs from unknown sources.
+To check that the file is the one I built, compare its SHA-256:
+
+```
+17BB0645CA4B12566CBDF6428B3C3D8629C78A506CCD3EB14AC12FB30B50798B
+```
+
+On Windows PowerShell: `Get-FileHash .\GarageLink-v1.0.0.apk -Algorithm SHA256`
+
 ## What it does
 
 **For garage owners**
